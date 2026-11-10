@@ -1,0 +1,21 @@
+{
+  "name": "台灣鐵路時刻查詢",
+  "short_name": "鐵路時刻",
+  "description": "高鐵與台鐵列車時刻快速查詢",
+  "lang": "zh-Hant",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f6f4f1",
+  "theme_color": "#d9480f",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "高鐵時刻", "short_name": "高鐵", "url": "./thsr-timetable.html", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] },
+    { "name": "台鐵時刻", "short_name": "台鐵", "url": "./tra-timetable.html", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] }
+  ]
+}
