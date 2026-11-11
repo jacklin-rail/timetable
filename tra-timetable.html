@@ -83,6 +83,13 @@
   .st.late { background:#ffe6cc; color:#b34700; }
   .st.na   { background:#ececec; color:#666; }
   .fare { color:#0b4a8a; font-weight:bold; }
+  .train-card.best { background:#e3f6e8; border-left-color:#1b9e4b; box-shadow:0 0 0 2px #1b9e4b55; }
+  .best-tag { font-size:.8rem; background:#1b9e4b; color:#fff; border-radius:4px; padding:1px 6px; margin-left:6px; font-weight:bold; }
+  .leg { padding:4px 0; }
+  .leg + .leg { border-top:1px dashed #ccc; }
+  .wait { text-align:center; font-size:.85rem; color:#8a5a00; background:#fff4d6; border-radius:6px; padding:3px 6px; margin:4px 0; }
+  .total { margin-top:4px; font-weight:bold; color:#0b4a8a; }
+  .clear-btn { background:none; color:#888; border:1px solid #ccc; padding:6px; margin-top:6px; font-weight:normal; font-size:.85rem; }
   .loading, .error { text-align:center; padding:12px; font-size:.95rem; }
   .error { color:#d9534f; }
   .hint { font-size:.8rem; color:#888; text-align:center; margin-top:12px; }
@@ -128,6 +135,15 @@
         <input type="text" readonly placeholder="請選擇起站" autocomplete="off">
         <div class="combo-list"></div>
       </div>
+    </div>
+
+    <div class="form-group">
+      <label>轉乘站（選填，需出站並間隔 20 分鐘以上再進站）：</label>
+      <div class="combo" id="comboVia">
+        <input type="text" readonly placeholder="不轉乘（直達查詢）" autocomplete="off">
+        <div class="combo-list"></div>
+      </div>
+      <button type="button" class="clear-btn" id="clearVia">清除轉乘站</button>
     </div>
 
     <div class="form-group">
@@ -201,6 +217,20 @@
   function durText(dep, arr) {
     const toMin = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
     const mins = (toMin(arr) - toMin(dep) + 1440) % 1440;
+    const h = Math.floor(mins / 60), m = mins % 60;
+    return h > 0 ? `${h} 小時 ${m} 分` : `${m} 分`;
+  }
+  const toMinHM = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+  function absMin(dateStr, t) {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    return Math.round(Date.UTC(y, m - 1, d) / 60000) + toMinHM(t);
+  }
+  function fmtAbs(abs) {
+    const dt = new Date(abs * 60000);
+    return { date: `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`,
+             time: `${pad(dt.getUTCHours())}:${pad(dt.getUTCMinutes())}` };
+  }
+  function minsText(mins) {
     const h = Math.floor(mins / 60), m = mins % 60;
     return h > 0 ? `${h} 小時 ${m} 分` : `${m} 分`;
   }
@@ -346,6 +376,8 @@
       out.push({
         date, dep, arr,
         nextDay: arr < dep,
+        depAbs: absMin(date, dep),
+        arrAbs: absMin(date, dep) + ((toMinHM(arr) - toMinHM(dep) + 1440) % 1440),
         trainNo: String(info.TrainNo || '').trim(),
         type: nm(info.TrainTypeName),
         typeCode: info.TrainTypeCode != null ? info.TrainTypeCode : info.TrainTypeID,
@@ -458,12 +490,14 @@
   }
 
   // ---------- 初始化 ----------
-  let comboFrom, comboTo;
+  let comboFrom, comboVia, comboTo;
   window.addEventListener('DOMContentLoaded', async () => {
     initDateTime();
 
     comboFrom = makeCombo($('comboFrom'));
+    comboVia = makeCombo($('comboVia'));
     comboTo = makeCombo($('comboTo'));
+    $('clearVia').addEventListener('click', () => { comboVia.selected = null; comboVia.input.value = ''; });
     $('saveCredBtn').addEventListener('click', applyCreds);
 
     try {
@@ -496,10 +530,90 @@
       return;
     }
 
+    const via = comboVia.selected;
+    if (via && (via.id === from.id || via.id === to.id)) {
+      resultDiv.innerHTML = '<div class="error">⚠️ 轉乘站不能與起站或到站相同。</div>';
+      return;
+    }
+
     btn.disabled = true;
     resultDiv.innerHTML = '<div class="loading">⏳ 正在查詢時刻表中...</div>';
 
     try {
+      if (via) {
+        const MIN_GAP = 20;   // 出站後至少間隔 20 分鐘才能再進站搭車
+        // 第一段：起站 → 轉乘站（取目標時間之後的班次）
+        let pool1 = [];
+        for (let i = 0; i < 3; i++) {
+          const day = addDays(targetDate, i);
+          let trains;
+          try { trains = await fetchOD(from.id, via.id, day); }
+          catch (err) { if (i === 0) throw err; break; }
+          pool1 = pool1.concat(trains.filter(t => t.sortKey >= targetKey));
+          if (pool1.length >= 10) break;
+        }
+        pool1.sort((a, b) => a.depAbs - b.depAbs);
+        if (!pool1.length) {
+          resultDiv.innerHTML = '<div class="error">⚠️ 該時間點之後找不到從起站直達轉乘站的列車。</div>';
+          return;
+        }
+
+        // 第二段：轉乘站 → 到站（涵蓋第一段最晚到站後一天）
+        const lastArr = Math.max(...pool1.map(t => t.arrAbs));
+        const lastDay = fmtAbs(lastArr + MIN_GAP).date;
+        let pool2 = [];
+        for (let i = 0; i < 5; i++) {
+          const day = addDays(targetDate, i);
+          if (day > addDays(lastDay, 1)) break;
+          try { pool2 = pool2.concat(await fetchOD(via.id, to.id, day)); }
+          catch (err) { if (i === 0) throw err; break; }
+        }
+        pool2.sort((a, b) => a.depAbs - b.depAbs);
+
+        // 配對：第二段須在第一段到站 + 20 分鐘後出發，挑最早抵達到站者
+        const plans = [];
+        for (const a of pool1) {
+          const ready = a.arrAbs + MIN_GAP;
+          let best = null;
+          for (const b of pool2) {
+            if (b.depAbs < ready) continue;
+            if (!best || b.arrAbs < best.arrAbs) best = b;
+          }
+          if (best) plans.push({ a, b: best, total: best.arrAbs - a.depAbs, wait: best.depAbs - a.arrAbs });
+          if (plans.length >= 5) break;
+        }
+
+        if (!plans.length) {
+          resultDiv.innerHTML = '<div class="error">⚠️ 找不到符合「出站後 20 分鐘再進站」的轉乘班次。</div>';
+          return;
+        }
+
+        const minTotal = Math.min(...plans.map(p => p.total));
+        let html = `<h3>${esc(from.name)} ➔ ${esc(via.name)}（出站）➔ ${esc(to.name)}　最近 ${plans.length} 筆：</h3>`;
+        plans.forEach(p => {
+          const isBest = p.total === minTotal;
+          const dTag = ab => { const f = fmtAbs(ab); return f.date !== targetDate ? `<span class="date-tag">${f.date}</span>` : ''; };
+          const aArr = fmtAbs(p.a.arrAbs), bDep = fmtAbs(p.b.depAbs), bArr = fmtAbs(p.b.arrAbs);
+          html += `
+            <div class="train-card${isBest ? ' best' : ''}">
+              <div class="train-header"><span>合計行車時間 ${minsText((p.a.arrAbs - p.a.depAbs) + (p.b.arrAbs - p.b.depAbs))}<br>含停留總時間 ${minsText(p.total)}</span>${isBest ? '<span class="best-tag">⚡ 最省時</span>' : ''}</div>
+              <div class="train-info">
+                <div class="leg">
+                  <b>① 車次 ${esc(p.a.trainNo)}</b>${p.a.type ? `<span class="type-tag">${esc(p.a.type)}</span>` : ''}<br>
+                  ${esc(from.name)} ${p.a.dep}${dTag(p.a.depAbs)} ➔ ${esc(via.name)} ${aArr.time}${dTag(p.a.arrAbs)}
+                </div>
+                <div class="wait">🚪 於${esc(via.name)}出站，停留 ${minsText(p.wait)} 後再進站</div>
+                <div class="leg">
+                  <b>② 車次 ${esc(p.b.trainNo)}</b>${p.b.type ? `<span class="type-tag">${esc(p.b.type)}</span>` : ''}<br>
+                  ${esc(via.name)} ${bDep.time}${dTag(p.b.depAbs)} ➔ ${esc(to.name)} ${bArr.time}${dTag(p.b.arrAbs)}
+                </div>
+              </div>
+            </div>`;
+        });
+        resultDiv.innerHTML = html;
+        return;
+      }
+
       // 先查當天；不足 5 班再補隔天（最多補 2 天）
       let pool = [];
       for (let i = 0; i < 3; i++) {

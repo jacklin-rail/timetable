@@ -1,7 +1,7 @@
 // Service Worker：只快取本站的頁面與圖示（App Shell）。
 // TDX 的 API 請求（跨網域）一律直接連網，不經過快取，避免讀到過期時刻表或誤點資料。
 // 更新頁面後，請把 VERSION 數字加 1，使用者下次開啟就會取得新版。
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CACHE = 'rail-timetable-' + VERSION;
 const SHELL = [
   './',
